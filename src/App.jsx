@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState,useCallback } from 'react'
 import { useForm } from "react-hook-form";
 import './App.css'
 import Message from './Component/Message';
+import { PeerContext } from './Context/PeerContext';
 
-
-
+    import ReactPlayer from 'react-player'
 
 function App() {
 
@@ -14,89 +14,48 @@ function App() {
     let [roomId, setRoomId] = useState(localStorage.getItem("roomId"))
     let [chat, setChat] = useState([])
     let [msg, setM] = useState("")
-    let [blob, setBlob] = useState([])
+    let [videoSocket,setVideoSocket]=useState(null)
     let inputRef = useRef();
     let divRef = useRef();
-    let [idx,setIdx]=useState(0)
-    const [isRecording, setIsRecording] = useState(false);
-    const mediaRecorder = useRef(null);
-    let [speaking, setSpeaking] = useState(true);
-    let [dis,setDis]=useState(false)
-    let disT=useRef()
-    let [audioSocket,setAudioSocket]=useState({})
-    let id=useRef   (0);
-    const [audioQueue, setAudioQueue] = useState([]); // Queue of audio blobs
-    const isPlayingRef = useRef(false); // Pr
-    const startRecording = async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true});
-       
+    let {peer,createOffer,createAnswer,acceptAnswer,sendStreams,remS}=useContext(PeerContext)
+    let [connected,setConnected]=useState(false)
+    let [selfS,setSelfS]=useState(null)
+    // let [remS,setRemS]=useState(null)
 
-        mediaRecorder.current = new MediaRecorder(stream);
+
+
+
+
+
+    let setStream= async function (){
+     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream)=>{
+        if(!selfS){
+            sendStreams(stream)
+        }
+      
+        setSelfS(stream)
+       
+    
+
+     });
         
-        mediaRecorder.current.ondataavailable = (event) => {
-            console.dir(event);
+        
 
+    }
 
-            if (event.data.size > 0) {
-                const reader=new FileReader()
-                reader.readAsArrayBuffer(event.data)
-                reader.onloadend=()=>{
-                    audioSocket.send(reader.result)
-                }
        
-            }
-
-        };
-
-        mediaRecorder.current.onstop = () => {
-           
-            console.log("Recording finished:", blob);
-        };
-
-        mediaRecorder.current.start();
-        setIsRecording(true);
-    };
-
-
-    const stopRecording = () => {
-        console.log("hi");
-
-
-        mediaRecorder.current.stop();
-        setIsRecording(false);
-    };
-
-
-
-
-
+         
     useEffect(() => {
+        console.dir(peer);
+        
+        
+
+
+      
         let real = (localStorage.getItem("roomId") != null && localStorage.getItem("name") != null);
 
-
-
         let socket = new WebSocket("wss://realtime-backend-y8hf.onrender.com")
-        let audioSocket = new WebSocket("https://socket-2-1ks3.onrender.com")
-        socket.onopen = () => {
-          console.log("connected!");
-          
-        }
-        audioSocket.onopen=()=>{
-            console.log("audio connected")
-            setAudioSocket(audioSocket);
-
-            let obj = {
-                type: "join",
-                payload: {
-                    name,
-                    roomId
-                }
-            }
-           
-
-            audioSocket.send(JSON.stringify(obj))
-        }
-
+       
         socket.onmessage = (e) => {
 
 
@@ -148,54 +107,116 @@ function App() {
         }
         setSocket(socket)
         // let timeOut;
-        audioSocket.onmessage=(e)=>{
+
+
+        let videoSocket=new WebSocket("wss://video-backend-wrt8.onrender.com")
+        videoSocket.onopen=(e)=>{
+                setVideoSocket(videoSocket)
+              
+        }
+
+        videoSocket.onmessage=(e)=>{
+            let {type}=JSON.parse(e.data)
+            let parsedObj=JSON.parse(e.data)
             
+            if(type=='new-user'){
+                console.log("new user joined with email :-",parsedObj.payload.email);
+                
+                createOffer().then((data)=>{
+                 
+                    let newObj={
+                        type:"offer",
+                        payload:{
+                            offer:data,
+                            email:name
+                        }
+                    }
+                    videoSocket.send(JSON.stringify(newObj))
+                })
+            }
+            if(type=='offer-conform'){
+                let {offer}=parsedObj.payload
+                createAnswer(offer).then((answer)=>{
+                    let newObj={
+                        type:"answer",
+                        payload:{
+                            answer
+                        }
+                        
+                    }
+                    console.dir(answer);
+                    
+                    videoSocket.send(JSON.stringify(newObj))
+                })
+
+            }
+
+            if(type=='answer-verify'){
+                let {email,answer}=parsedObj.payload
+                acceptAnswer(answer).then(()=>{
+                    setConnected(true);
+                    let newObj={
+                        type:"success"
+                    }
+                    console.log("old: I am connected and accepted all terms!");
+                   
+                    videoSocket.send(JSON.stringify(newObj))
+                    setStream().then(()=>{   
+                        sendStreams()
+                    })
+                })
+                .catch((err)=>{
+                    console.log("Error in +"+err);
+                    
+                })
+            }
+            if(type=='success'){
+                setConnected(true)
+                setStream()
+                .then(()=>{   
+                    sendStreams()
+                })
+                console.log("I also connected !");
+                
+            }
+
+           
+        }
+
+        peer.onnegotiationneeded=async(ev)=>{
             
-            // clearTimeout(timeOut)
-            let arrayBuffer=(e.data);
-            
-            const audioBlob=new Blob([arrayBuffer],{type:"audio/webm"});
-            
-            setAudioQueue((prevQueue) => [audioBlob]);
-            console.log("setting disble !");
-            
-      
+                    
+               
+             
+                let newObja={
+                    type:'del',
+                    
+                }
+                videoSocket.send(JSON.stringify(newObja))
+
+
+
+                let obja={
+                    type:"joined",
+                    payload:{
+                        email:name,
+                        roomId
+                    }
+                }
+                videoSocket.send(JSON.stringify(obja))
 
             
-            // timeOut=setTimeout(()=>{setDis(false)},2000)
         }
+     
+
+    
+
+        return ()=> videoSocket.close();
+        
 
     }, [])
 
-    useEffect(() => {
-     
-          playNext();
-        
-      }, [audioQueue]);
 
-
-  const playNext = () => {
-       
-        let blob=audioQueue[0];
-            
-        setDis(true);
-
-
-        if(blob){
-            let audioURL=URL.createObjectURL(blob)
-            console.log(audioURL);
-            let audio=new Audio(audioURL)
-            audio.play()
-        
-        }
-
-
-
-     
-        setDis(false)
-      
-   
-  };
 
     const onSubmit = data => console.log(data);
     return (
@@ -217,6 +238,17 @@ function App() {
                     socket.send(JSON.stringify(obj))
 
 
+
+                    let obja={
+                        type:"joined",
+                        payload:{
+                            email:name,
+                            roomId
+                        }
+                    }
+                    videoSocket.send(JSON.stringify(obja))
+
+
                         ; (setactiveP(() => { false }))
                 }} className='w-[100%] py-3 bg-black text-white font-medium rounded-md'>Join the chat!</button>
             </div>}
@@ -224,7 +256,7 @@ function App() {
 
 
              <div className={`relative flex justify-center items-center h-screen w-full bg-black/90 bg-cover bg-[url("https://images.unsplash.com/photo-1484950763426-56b5bf172dbb?w=800&auto=format&fit=crop&q=60&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTF8fGRhcmslMjBiYWNrZ3JvdW5kfGVufDB8fDB8fHww")]  ${activeP ? "blur-md" : ''}`} >
-         <div>
+         {/* <div>
                     {!dis && <button disabled={dis} onClick={()=>{
 
                           setSpeaking((data)=>!data)
@@ -246,7 +278,7 @@ function App() {
                           }
 
                     }} className='flex items-center gap-2 p-4  bg-black text-white border-1 border-white rounded-lg'>Speaking {!speaking && <span className='h-3 w-3 bg-red-600 rounded-full inline-block '></span>} {speaking&&<span className='h-3 w-3 bg-lime-400 rounded-full inline-block animate-pulse'></span>}</button>}
-                </div> 
+                </div>  */}
 
                 <div className=' p-3 flex flex-col justify-between h-[70%] w-[60%] border-2 border-white text-white rounded-md bg-black/40 backdrop-blur-sm '>
 
@@ -264,34 +296,24 @@ function App() {
 
 
 
-                    <div className='flex justify-between px-3 w-[100%] '>
+                    <div className='flex justify-between px-3 w-[100%] min-h-1/2 '>
+                       { selfS && 
+                       <ReactPlayer   muted playing url={selfS} />}
+                        {remS && (
+                            <>
+                            <h1>Remote Stream</h1>
+                            <ReactPlayer
+                                
+                                playing
+                                
+                               
+                                url={remS[0]}
+                            />
+                             <ReactPlayer url={remS[1]} playing controls style={{ display: "none" }} />
+                            </>
+                        )}
+                      
 
-                        <input ref={inputRef} onChange={(e) => setM(e.target.value)} type="text " className='bg-black placeholder-white  text-white text-lg font-semibold border-1 border-white font-mono rounded-md placeholder-black px-5 py-3 w-3/4 outline-none' placeholder='Enter message' />
-                       { <button onClick={() => {
-
-                            let obj = {
-                                type: "msg",
-                                payload: {
-                                    chat: msg,
-
-                                }
-                            }
-
-                            inputRef.current.value = ""
-                            inputRef.current.blur()
-                            socket.send(JSON.stringify(obj))
-
-                            let scrollableDiv = divRef.current
-                            scrollableDiv.scrollTo({ top: scrollableDiv.scrollHeight, behavior: "smooth" });
-
-
-
-                            //audio
-
-
-
-                        }} className='bg-black w-[20%] font-mono text-white bg-black border-1 border-white font-semibold tracking-wide rounded-sm'>Send Message</button>
-}
                     </div>
 
 
